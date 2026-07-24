@@ -1,0 +1,47 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Renovate configuration for the kryptos CLI (Go module + CI tooling)",
+  "dependencyDashboardTitle": "Renovate Dashboard: Kryptos",
+  "dependencyDashboardHeader": "Tracks dependency updates for the kryptos CLI (Go module + CI image).\n\n**After merging**: auto-tag cuts the next `vX.Y.Z` release from the merged Conventional Commits; the tag pipeline runs goreleaser + the Harbor OCI publish.\n\n---",
+  "dependencyDashboardFooter": "---\n\n**Resources**: [Releases](https://source.example.com/example-org/kryptos/-/releases) | [Renovate Config](https://source.example.com/example-org/kryptos/-/blob/main/renovate.json) | [CLAUDE.md](https://source.example.com/example-org/kryptos/-/blob/main/.claude/CLAUDE.md)",
+  "extends": [
+    "local>homelab/renovate",
+    "local>homelab/renovate:dockerfile-args",
+    "local>homelab/renovate:ci-components",
+    "gitlab>renovate-bot/renovate-runner"
+  ],
+  "enabledManagers": [
+    "gomod",
+    "pre-commit",
+    "dockerfile",
+    "custom.regex",
+    "gitlabci"
+  ],
+  "postUpdateOptions": ["gomodTidy"],
+  "packageRules": [
+    {
+      "description": "Group all charm.land/* TUI deps (huh, lipgloss, bubbletea) together",
+      "matchPackageNames": ["charm.land/**"],
+      "groupName": "charm TUI libraries"
+    },
+    {
+      "description": "Group golang.org/x/* together",
+      "matchPackageNames": ["golang.org/x/**"],
+      "groupName": "golang.org/x"
+    },
+    {
+      "description": "Disable the built-in dockerfile manager for the golang dep in .ci/docker/Dockerfile. The FROM line uses ARG indirection (`FROM golang:${GO_VERSION}-alpine`), so the built-in manager infers a literal `golang:<tag>-alpine` string that doesn't exist in the file — producing 3 zombie ghost branches per cron (pin-dependencies, golang-1.25.x, golang-1.x) that emit 'Cannot find replaceString' and never create PRs. The customManagers regex above tracks the ARG via the `# renovate:` annotation instead.",
+      "matchFileNames": [".ci/docker/Dockerfile"],
+      "matchDepNames": ["golang"],
+      "matchManagers": ["dockerfile"],
+      "enabled": false
+    },
+    {
+      "description": "Disable digest-pinning for the custom.regex ARG-managed golang dep in .ci/docker/Dockerfile (the annotated-ARG manager now comes from the shared dockerfile-args preset). With pinDigests the inherited `docker:pinDigests` (config:best-practices) issues a digest re-pin that builds a malformed `manifests/<tag>@sha256:<digest>` HEAD → 404 ('Could not determine new digest') every run. pinDigests:false suppresses the probe; a real go tag bump still rewrites tag+digest via the autoReplaceStringTemplate, so the digest stays current. Scoped to custom.regex so it never touches the native dockerfile/gomod managers.",
+      "matchFileNames": [".ci/docker/Dockerfile"],
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["golang"],
+      "pinDigests": false
+    }
+  ]
+}

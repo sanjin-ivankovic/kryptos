@@ -1,0 +1,88 @@
+# ==============================================================================
+# Kryptos Repository - .gitignore
+# ==============================================================================
+# Go CLI/TUI for sealing secrets (consumed by the argo-apps GitOps repo).
+# The compiled binary is built on demand and never committed.
+# ==============================================================================
+
+# ==============================================================================
+# OS - macOS
+# ==============================================================================
+
+.DS_Store
+.DS_Store?
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.VolumeIcon.icns
+.TemporaryItems
+.fseventsd
+
+# ==============================================================================
+# IDE & Editors
+# ==============================================================================
+
+# VSCode (keep project-level settings)
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# ==============================================================================
+# Go
+# ==============================================================================
+
+# Compiled binary (build on demand: `make build` / `go run .`; never committed)
+/kryptos
+
+# Test binaries
+*.test
+
+# Dependency / vendor directory (modules are fetched on demand)
+vendor/
+
+# ==============================================================================
+# Build & Coverage Artifacts
+# ==============================================================================
+
+# Go coverage
+coverage.out
+coverage.html
+
+# Python tooling coverage (pre-commit / linters run from .config/)
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+
+# goreleaser output
+/dist/
+
+# ==============================================================================
+# CI/CD Artifacts
+# ==============================================================================
+
+# Security and quality report artifacts
+gl-code-quality-report.json
+gl-secret-detection-report.json
+*.sarif
+
+# ==============================================================================
+# Secret Management (never commit plaintext secrets)
+# ==============================================================================
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Certificate and key files
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx

@@ -1,0 +1,316 @@
+---
+# =============================================================================
+# GitLab CI/CD pipeline for kryptos (Go CLI).
+#
+# Runs on the homelab gitlab-runner (instance runner, Docker executor binding
+# the host docker socket — tags: [docker]). kryptos has no ArgoCD app; the CI
+# pipeline is the whole story.
+#
+# Quality is NATIVE per-tool jobs (fail-fast, individually gated), NOT a
+# pre-commit blob: scan:secrets (gitleaks) + lint:go (golangci-lint) + test:go
+# (build/vet/test) + smoke:cli. pre-commit stays a LOCAL dev hook only — it is
+# never run in CI. The CI image ships the tools; the jobs call them directly.
+#
+# Release model:
+#   - push to main      → auto-tag (component): conventional-commit → next
+#                         vX.Y.Z, pushed with a write-scoped PAT. That tag push
+#                         starts a NEW pipeline (tag pipeline).
+#   - tag push (v*)     → release: goreleaser publishes linux/darwin × amd64/
+#                         arm64 to the GitLab release + Package Registry; then
+#                         publish:oci pushes the archives to Harbor as an OCI
+#                         artifact (registry.example.com/example-org/kryptos/cli,
+#                         cosign-signed) — the tokenless distribution channel
+#                         argo-apps' CI image pulls from.
+#   - push to main + .ci/docker changed (or SCHEDULE_TYPE=rebuild schedule) →
+#                         rebuild + cosign-sign + SBOM-attest the CI image
+#                         (ci-image / cosign-sign / sbom-attest components).
+#
+# Harbor auth: GitLab Harbor integration (group homelab) injects $HARBOR_*.
+# Secrets via CI/CD variables: COSIGN_KEY/COSIGN_PASSWORD (group),
+# KRYPTOS_RELEASE_TOKEN (project).
+# =============================================================================
+
+# Pin every job to the homelab Docker-socket runner (tags: docker, shared).
+default:
+  tags:
+    - docker
+  # Superseded pipelines auto-cancel (workflow:auto_cancel below). The
+  # side-effecting jobs (build/sign/attest/tag/release/publish) opt out below.
+  interruptible: true
+
+# Shared secret-scan from the homelab/ci-components scan-secrets COMPONENT
+# (version-pinned below, Renovate-tracked). kryptos does NOT use the lint or ci-scripts
+# components — its CI image is a standalone Go toolchain with no yaml/markdown/
+# shell linters and no publish tooling. The component runs gitleaks on ci-base
+# (which carries it) reading this repo's own .config/.gitleaks.toml +
+# .gitleaksignore. The rules input adds the v* tag pipeline (the release gate)
+# to the component's MR + main-push default. Renovate runs from the central
+# homelab/renovate project — no renovate job lives here.
+include:
+  - component: source.example.com/homelab/ci-components/scan-secrets@2.1.14
+    inputs:
+      rules:
+        - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+        - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+        - if: '$CI_COMMIT_TAG =~ /^v/'
+  # Conventional-commit gate on MRs — auto-tag derives vX.Y.Z from these.
+  - component: source.example.com/homelab/ci-components/lint-commits@2.1.14
+
+  # Build + sign this repo's CI image via the shared components (replaces the
+  # former inline build:ci-image/sign:ci-image pair — identical logic).
+  - component: source.example.com/homelab/ci-components/ci-image@2.1.14
+    inputs:
+      image_name: example-org/kryptos/ci
+      changes: [.ci/docker/Dockerfile]
+  - component: source.example.com/homelab/ci-components/cosign-sign@2.1.14
+    inputs:
+      job_name: "sign:ci-image"
+      needs_job: "build:ci-image"
+      rules:
+        - if: '$CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE_TYPE == "rebuild"'
+        - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+          changes: [.ci/docker/Dockerfile]
+  # SBOM attestation for the CI image. The kryptos CI image carries no syft,
+  # so this one job runs on ci-base directly (per-component image override).
+  - component: source.example.com/homelab/ci-components/sbom-attest@2.1.14
+    inputs:
+      job_name: "sbom:ci-image"
+      needs_job: "build:ci-image"
+      image: registry.example.com/homelab/ci-components/ci:latest
+      rules:
+        - if: '$CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE_TYPE == "rebuild"'
+        - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+          changes: [.ci/docker/Dockerfile]
+
+  # Conventional-commit vX.Y.Z release tagging (replaces the inline auto-tag
+  # job — same bump logic, shared with ci-components).
+  - component: source.example.com/homelab/ci-components/auto-tag@2.1.14
+    inputs:
+      tag_prefix: "v"
+      token: "$KRYPTOS_RELEASE_TOKEN"
+
+  # Sign the OCI-distributed release archive (publish:oci below writes the
+  # digest ref file).
+  - component: source.example.com/homelab/ci-components/cosign-sign@2.1.14
+    inputs:
+      job_name: "sign:oci-artifact"
+      stage: release
+      needs_job: "publish:oci"
+      ref_file: kryptos-oci-ref.txt
+      rules:
+        - if: '$CI_COMMIT_TAG =~ /^v/'
+
+  # GitHub portfolio mirror. kryptos runs a standalone Go image (no ci-base),
+  # so the mirror runs on ci-base directly — it carries the /opt/ci publish
+  # tooling and the sanitize-base this repo's config extends.
+  - component: source.example.com/homelab/ci-components/mirror-github@2.1.14
+    inputs:
+      image: registry.example.com/homelab/ci-components/ci:latest
+      repo_name: kryptos
+
+stages:
+  - scan
+  - lint
+  - test
+  - image
+  - release
+  - mirror
+
+variables:
+  CI_IMAGE: registry.example.com/example-org/kryptos/ci:latest
+  CI_IMAGE_BASE: registry.example.com/example-org/kryptos/ci
+  # Shallow clone for most jobs; release/auto-tag override this to a full
+  # clone — they need tags + history.
+  GIT_DEPTH: "50"
+
+# Dedupe branch+MR pipelines: MR pipelines on branches, push pipelines only on
+# main, plus tag pipelines for v*. (Same pattern as the archived .gitlab-ci.yml.)
+workflow:
+  auto_cancel:
+    on_new_commit: interruptible
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+    - when: never
+
+# Side-effecting COMPONENT jobs must never be killed mid-flight by auto-cancel.
+# These partial overrides merge onto the component-generated jobs by name (the
+# inline release/publish:oci jobs set interruptible: false directly).
+build:ci-image:
+  interruptible: false
+sign:ci-image:
+  interruptible: false
+sbom:ci-image:
+  interruptible: false
+auto-tag:
+  interruptible: false
+sign:oci-artifact:
+  interruptible: false
+mirror:github:
+  interruptible: false
+
+# scan:secrets is generated by the scan-secrets component included above.
+
+# -----------------------------------------------------------------------------
+# Go lint: golangci-lint (bundles vet + staticcheck; reads .golangci.yml).
+# Gated to Go-affecting changes; always runs on tag pipelines (release gate).
+# -----------------------------------------------------------------------------
+lint:go:
+  stage: lint
+  image: $CI_IMAGE
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes: &go-changes
+        - "**/*.go"
+        - go.mod
+        - go.sum
+        - .golangci.yml
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+      changes: *go-changes
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  script:
+    - golangci-lint run ./...
+
+# -----------------------------------------------------------------------------
+# Go build + vet + test. The coverage profile is converted to cobertura and the
+# test run to junit, so GitLab's MR widgets show the coverage % + delta and the
+# test summary. The `coverage:` regex below scrapes `go tool cover -func`'s
+# trailing "total:" line — that number is what GitLab charts over time.
+# Same gating as lint:go.
+# -----------------------------------------------------------------------------
+test:go:
+  stage: test
+  image: $CI_IMAGE
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes: &go-src-changes
+        - "**/*.go"
+        - go.mod
+        - go.sum
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+      changes: *go-src-changes
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  coverage: '/^total:\s+\(statements\)\s+(\d+\.\d+)%$/'
+  script:
+    - go build ./...
+    - go vet ./...
+    # -covermode=atomic (not the default `set`) so the counts stay correct under
+    # the parallel test runner and cobertura gets real hit counts.
+    - gotestsum --junitfile junit.xml --format testname
+      -- ./... -coverprofile=coverage.out -covermode=atomic
+    - go tool cover -func=coverage.out
+    - gocover-cobertura < coverage.out > coverage.xml
+  artifacts:
+    when: always
+    reports:
+      junit: junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+    expire_in: 7 days
+
+# -----------------------------------------------------------------------------
+# CLI smoke test: the built binary still runs its commands. Cheap sanity gate
+# after the unit tests.
+# -----------------------------------------------------------------------------
+smoke:cli:
+  stage: test
+  image: $CI_IMAGE
+  needs:
+    - job: test:go
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes: *go-src-changes
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+      changes: *go-src-changes
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  script:
+    - go run . validate --help >/dev/null
+    - echo "CLI smoke OK"
+
+# build:ci-image / sign:ci-image / sbom:ci-image are generated by the ci-image,
+# cosign-sign, and sbom-attest components included above (the former inline
+# build/sign pair, unchanged in behavior: docker:cli builds against the host
+# daemon, cosign signs by digest from the image-ref.txt artifact).
+
+# -----------------------------------------------------------------------------
+# Release: goreleaser on a version-tag push. Publishes linux/darwin × amd64/
+# arm64 to the GitLab release (.goreleaser.yaml release.gitlab). Behind the
+# quality gate (lint:go + test:go both run on tag pipelines) so a red build
+# never releases.
+# -----------------------------------------------------------------------------
+release:
+  stage: release
+  image: $CI_IMAGE
+  interruptible: false
+  # Hard dependencies: lint:go + test:go run on tag pipelines (their rules
+  # include the tag), so a red build blocks the release.
+  needs:
+    - job: lint:go
+    - job: test:go
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  variables:
+    GIT_DEPTH: "0"          # goreleaser needs full history + the tag
+    GITLAB_TOKEN: $KRYPTOS_RELEASE_TOKEN
+  script:
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - git fetch --tags --force
+    - echo "=== goreleaser release ($(git describe --tags --always)) ==="
+    - goreleaser release --clean
+  # Hand the built archives to publish:oci (the Harbor OCI distribution
+  # channel) without a token-authenticated re-download.
+  artifacts:
+    paths:
+      - dist/*.tar.gz
+      - dist/checksums.txt
+    expire_in: 1 hour
+
+# -----------------------------------------------------------------------------
+# Publish the release archives to Harbor as an OCI artifact. This is the
+# tokenless distribution channel: consumers (argo-apps' CI image build) pull
+# with Harbor credentials (already injected by the GitLab Harbor integration)
+# instead of a private GitLab read PAT + BuildKit secret. The GitLab Package
+# Registry publish (goreleaser, above) stays in place during the migration
+# overlap. sign:oci-artifact (cosign-sign component) signs the pushed artifact
+# by digest via kryptos-oci-ref.txt.
+# -----------------------------------------------------------------------------
+publish:oci:
+  stage: release
+  image: $CI_IMAGE
+  interruptible: false
+  needs:
+    - job: release
+      artifacts: true
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  variables:
+    OCI_REPO: registry.example.com/example-org/kryptos/cli
+  script:
+    - echo "$HARBOR_PASSWORD" | oras login "$HARBOR_HOST" -u "$HARBOR_USERNAME" --password-stdin
+    - VERSION="${CI_COMMIT_TAG#v}"
+    - cd dist
+    - >
+      oras push "$OCI_REPO:$CI_COMMIT_TAG"
+      --annotation "org.opencontainers.image.source=https://source.example.com/example-org/kryptos"
+      --annotation "org.opencontainers.image.version=$CI_COMMIT_TAG"
+      kryptos_${VERSION}_linux_amd64.tar.gz
+      kryptos_${VERSION}_linux_arm64.tar.gz
+      kryptos_${VERSION}_darwin_amd64.tar.gz
+      kryptos_${VERSION}_darwin_arm64.tar.gz
+      checksums.txt
+    # Resolve the pushed manifest digest for sign-by-digest.
+    - DIGEST=$(oras resolve "$OCI_REPO:$CI_COMMIT_TAG")
+    - echo "$OCI_REPO@$DIGEST" > "$CI_PROJECT_DIR/kryptos-oci-ref.txt"
+    - echo "pushed $(cat "$CI_PROJECT_DIR/kryptos-oci-ref.txt")"
+  artifacts:
+    paths:
+      - kryptos-oci-ref.txt
+    expire_in: 1 hour
+
+# auto-tag is generated by the auto-tag component included above (tag_prefix
+# "v", token $KRYPTOS_RELEASE_TOKEN): on a main push it computes the next
+# vX.Y.Z from Conventional Commits and pushes it; that tag push starts the
+# release pipeline.
