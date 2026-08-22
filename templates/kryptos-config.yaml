@@ -1,0 +1,280 @@
+---
+# Kryptos Secret Configuration Template
+#
+# Location: tools/kryptos/configs/<app-name>.yaml
+#
+# This template shows how to configure secrets for your application using
+# Kryptos. Copy this file to tools/kryptos/configs/ and customize for your
+# app.
+#
+# QUICK START:
+#   1. Copy to: tools/kryptos/configs/<app-name>.yaml
+#   2. Update metadata section with your app details
+#   3. Configure secrets in spec.secrets array
+#   4. Run: cd tools/kryptos && ./kryptos
+#   5. Select your app from the menu
+#
+# For more information, see:
+#   - tools/kryptos/README.md
+#   - docs/APPLICATION_DEVELOPMENT.md
+#   - docs/SECURITY.md
+#
+# EDITOR AUTOCOMPLETE & VALIDATION:
+#   The `# yaml-language-server` modeline below points your editor's YAML
+#   language server at the kryptos JSON schema for inline autocomplete and
+#   validation. Keep it as the first line of the config document. (Deep
+#   cross-field checks still live in `kryptos validate`.)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# KRYPTOS API VERSION (do not change)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+---
+# yaml-language-server: $schema=../schema/kryptos-v1.schema.json
+apiVersion: kryptos.dev/v1
+kind: SecretConfig
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# APPLICATION METADATA
+# ═══════════════════════════════════════════════════════════════════════════════
+
+metadata:
+  # Application identifier (lowercase, no spaces)
+  # Example: "myapp", "postgresql", "home-assistant"
+  name: '<app-name>'
+
+  # Human-readable display name (shown in menus)
+  # Example: "My App", "PostgreSQL", "Home Assistant"
+  displayName: '<App Name>'
+
+  # Kubernetes namespace (usually matches app name)
+  # Example: "myapp", "postgresql", "home-assistant"
+  namespace: '<app-name>'
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECRET SPECIFICATIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+spec:
+  secrets:
+    # ─────────────────────────────────────────────────────────────────────────
+    # EXAMPLE 1: Simple password-only secret
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: <app-name>-password
+      displayName: '<App Name> Password'
+      description: 'Main password for <App Name>'
+      type: Opaque
+      fields:
+        - name: password
+          prompt: 'Password'
+          generator: secure # Options: secure, strong, passphrase, apikey
+          required: true
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # EXAMPLE 2: Admin credentials (username + password)
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: <app-name>-admin-secret
+      displayName: 'Admin Credentials'
+      description: 'Administrator credentials for <App Name>'
+      type: Opaque
+      fields:
+        - name: username
+          prompt: 'Admin Username'
+          default: 'admin'
+          required: true
+
+        - name: password
+          prompt: 'Admin Password'
+          generator: strong # Use 'strong' for passwords with symbols
+          required: true
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # EXAMPLE 3: Database connection credentials
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: <app-name>-db-secret
+      displayName: 'Database Secret'
+      description: 'Database connection credentials for <App Name>'
+      type: Opaque
+      fields:
+        - name: host
+          prompt: 'Database Host'
+          default: 'postgresql.postgresql.svc.cluster.local'
+          required: true
+
+        - name: port
+          prompt: 'Database Port'
+          default: '5432'
+          required: true
+
+        - name: username
+          prompt: 'Database Username'
+          default: '<app-name>'
+          required: true
+
+        - name: password
+          prompt: 'Database Password'
+          generator: secure
+          required: true
+
+        - name: database
+          prompt: 'Database Name'
+          default: '<app-name>'
+          required: true
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # EXAMPLE 4: API token/key
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: <app-name>-api-secret
+      displayName: 'API Token'
+      description: 'External API authentication token'
+      type: Opaque
+      fields:
+        - name: token
+          prompt: 'API Token'
+          generator: apikey # 64-char alphanumeric for API keys
+          required: true
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # EXAMPLE 5: Redis/Valkey password
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: <app-name>-redis-secret
+      displayName: 'Redis/Valkey Password'
+      description: 'Password for Redis/Valkey cache'
+      type: Opaque
+      fields:
+        - name: password
+          prompt: 'Redis Password'
+          generator: secure
+          required: true
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # EXAMPLE 6: SMTP configuration
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: <app-name>-smtp-secret
+      displayName: 'SMTP Configuration'
+      description: 'Email server settings'
+      type: Opaque
+      fields:
+        - name: host
+          prompt: 'SMTP Host'
+          required: true
+
+        - name: port
+          prompt: 'SMTP Port'
+          default: '587'
+          required: true
+
+        - name: username
+          prompt: 'SMTP Username'
+          required: true
+
+        - name: password
+          prompt: 'SMTP Password'
+          generator: strong
+          required: true
+
+        - name: from
+          prompt: 'From Email Address'
+          default: 'noreply@example.com'
+          required: true
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # EXAMPLE 7: S3/Object storage credentials
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: <app-name>-s3-secret
+      displayName: 'S3 Credentials'
+      description: 'Object storage configuration'
+      type: Opaque
+      fields:
+        - name: endpoint
+          prompt: 'S3 Endpoint'
+          required: true
+
+        - name: region
+          prompt: 'S3 Region'
+          default: 'us-east-1'
+          required: true
+
+        - name: bucket
+          prompt: 'S3 Bucket Name'
+          required: true
+
+        - name: access-key
+          prompt: 'Access Key ID'
+          required: true
+
+        - name: secret-key
+          prompt: 'Secret Access Key'
+          generator: apikey
+          required: true
+# ═══════════════════════════════════════════════════════════════════════════════
+# FIELD CONFIGURATION REFERENCE
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Each field can have the following properties:
+#
+#   name (required):      Field name in the Kubernetes secret
+#   prompt (required):    User-facing prompt text
+#   default (optional):   Default value (user can override)
+#   generator (optional): Auto-generate password using:
+#                          - secure:     32-char alphanumeric (no symbols)
+#                          - strong:     32-char with symbols (!@#$%^&*)
+#                          - passphrase: 4 memorable words + number
+#                          - apikey:     64-char alphanumeric for APIs
+#   required (optional):  Whether field is required (default: true)
+#
+# AUTO-GENERATION KEYWORDS:
+#   Use keywords in the default field for automatic generation:
+#   - @secure, @strong, @passphrase, @apikey
+#
+#   Example:
+#     - name: password
+#       prompt: "Password"
+#       default: "@strong"    # Automatically generates strong password
+#       required: true
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# USAGE NOTES
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# 1. SECRET NAMING:
+#    - Name pattern: <app-name>-<type>-secret
+#    - Must match references in your app's manifests/values.yaml
+#    - Use lowercase with hyphens
+#
+# 2. GENERATORS:
+#    - Use 'secure' for most passwords (no special chars compatibility)
+#    - Use 'strong' when special characters are supported
+#    - Use 'apikey' for API tokens and long random strings
+#    - Use 'passphrase' for human-memorable passwords
+#
+# 3. DEFAULTS:
+#    - Provide sensible defaults when possible
+#    - Use @keyword for auto-generated defaults
+#    - Users can override during generation
+#
+# 4. REQUIRED FIELDS:
+#    - Set required: false only for truly optional fields
+#    - Most fields should be required: true
+#
+# 5. VALIDATION:
+#    - Test locally: kubectl apply -k cluster/apps/<app-name> --dry-run=server
+#    - Generate secrets: cd tools/kryptos && ./kryptos
+#    - Check sealed secrets: kubectl get sealedsecrets -n <namespace>
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# REAL-WORLD EXAMPLES
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# See actual configurations in tools/kryptos/configs/:
+#   - affine.yaml       - Multi-secret app (DB + Redis)
+#   - postgresql.yaml   - Complex multi-tenant DB config
+#   - valkey.yaml       - Simple password-only config
+#   - searxng.yaml      - Secret key configuration
+#   - cloudflared.yaml  - API token configuration
+#
+# For detailed documentation:
+#   - tools/kryptos/README.md - Kryptos usage guide
+#   - docs/SECURITY.md - Secret management best practices
+#   - docs/APPLICATION_DEVELOPMENT.md - Application setup workflow
+#
