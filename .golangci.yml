@@ -1,0 +1,38 @@
+# golangci-lint v2 configuration. The standard set (errcheck, govet,
+# ineffassign, staticcheck, unused) is the baseline; the linters below add what
+# matters for a tool that generates and seals secrets.
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - gosec
+    - bodyclose
+    - misspell
+
+  settings:
+    gosec:
+      excludes:
+        # G304 (file inclusion via variable): every hit is os.ReadFile on a path
+        # the user supplied — a config path or a CLI arg. That IS the job of a
+        # config-driven CLI; there is no privilege boundary to cross here.
+        - G304
+        # G301 (dir perms > 0750): the one hit creates apps/<tier>/<app>/secrets/
+        # for SealedSecret ciphertext, which is git-tracked and public by design.
+        # 0755 is correct.
+        - G301
+        # G101 (hardcoded credentials): fires on a string comparison against the
+        # literal "kubernetes.io/dockerconfigjson" — a secret TYPE, not a secret.
+        - G101
+
+  exclusions:
+    rules:
+      # Test files read fixtures from disk by construction.
+      - path: _test\.go
+        linters:
+          - gosec
+
+issues:
+  # Show all findings, not a truncated sample.
+  max-issues-per-linter: 0
+  max-same-issues: 0
