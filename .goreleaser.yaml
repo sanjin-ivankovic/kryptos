@@ -1,0 +1,48 @@
+# goreleaser v2 — cross-platform binaries for kryptos.
+# Local check:   goreleaser release --snapshot --clean
+# Real release:  pushed tag → CI runs `goreleaser release --clean`, which
+# builds the archives only; publish:oci pushes them to Harbor, the single
+# distribution channel. Nothing is published to GitLab.
+version: 2
+
+project_name: kryptos
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: kryptos
+    main: .
+    binary: kryptos
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X source.example.com/example-org/kryptos/cmd.version={{ .Version }}
+      - -X source.example.com/example-org/kryptos/cmd.commit={{ .Commit }}
+      - -X source.example.com/example-org/kryptos/cmd.date={{ .Date }}
+
+archives:
+  - id: kryptos
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - schema/kryptos-v1.schema.json
+      - templates/kryptos-config.yaml
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  disable: true

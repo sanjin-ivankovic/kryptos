@@ -1,0 +1,15 @@
+---
+# Exceptions to the homelab repo standard (ci-components
+# docs/REPO-STANDARD.md), checked by the lint:repo-standard job. Each reason
+# starts with accepted:, fix: or investigate:. An entry whose rule passes
+# fails the check, so remove it with the fix.
+exceptions:
+  config-drift:
+    .config/.yamllint: >-
+      accepted: ignores vendor/ and the goreleaser dist/ output
+    .config/.markdownlint-cli2.jsonc: >-
+      accepted: ignores goreleaser dist/ output, allows go and toml
+      fences and spells the project and tool names
+    .config/.gitleaks.toml: >-
+      accepted: drops the Kubernetes manifest rules; this repo holds Go
+      code, not manifests
